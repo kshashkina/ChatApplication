@@ -122,7 +122,10 @@ private:
 
                 std::string successMessage = "You have successfully switched to room " + newRoomID;
                 send(clientSocket, successMessage.c_str(), successMessage.length(), 0);
-            } else {
+            } else if (message.find("EXIT") == 0) {
+                removeClientFromRoom(clientSocket, roomID);
+                closesocket(clientSocket);}
+            else {
                 sendMessageToRoom(roomID, clientName, buffer, bytesRead);
             }
         }

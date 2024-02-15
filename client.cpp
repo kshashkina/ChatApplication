@@ -89,10 +89,19 @@ private:
     }
 
     void sendMessages() {
-        char buffer[1024];
+        std::string message;
         while (true) {
-            std::cin.getline(buffer, sizeof(buffer));
-            send(clientSocket, buffer, strlen(buffer), 0);
+            std::getline(std::cin, message);
+            if (message == "EXIT") {
+                send(clientSocket, message.c_str(), message.length(), 0);
+
+                std::cout << "Exiting the room and disconnecting..." << std::endl;
+                closesocket(clientSocket);
+                WSACleanup();
+                exit(0);
+            } else {
+                send(clientSocket, message.c_str(), message.length(), 0);
+            }
         }
     }
 };
