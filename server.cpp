@@ -112,7 +112,19 @@ private:
                 break;
             }
 
-            sendMessageToRoom(roomID, clientName, buffer, bytesRead);
+            std::string message(buffer, bytesRead);
+
+            if (message.find("CHANGE ") == 0) {
+                std::string newRoomID = message.substr(7);
+                removeClientFromRoom(clientSocket, roomID);
+                roomID = newRoomID;
+                addClientToRoom(clientSocket, roomID, clientName);
+
+                std::string successMessage = "You have successfully switched to room " + newRoomID;
+                send(clientSocket, successMessage.c_str(), successMessage.length(), 0);
+            } else {
+                sendMessageToRoom(roomID, clientName, buffer, bytesRead);
+            }
         }
     }
 
