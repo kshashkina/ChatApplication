@@ -40,7 +40,9 @@ public:
             exit(EXIT_FAILURE);
         }
 
-        std::cout << "Connected to server" << std::endl;
+        enterName();
+        enterRoom();
+        std::cout << "Connected to server and joined room " << roomID << std::endl;
 
         // Create a new thread to handle receiving messages
         std::thread([this]() {
@@ -58,6 +60,20 @@ private:
     SOCKET clientSocket;
     sockaddr_in serverAddr{};
     WSADATA wsaData;
+    std::string roomID;
+    std::string userName;
+
+    void enterRoom() {
+        std::cout << "Enter room ID: ";
+        std::cin >> roomID;
+        send(clientSocket, roomID.c_str(), roomID.size(), 0);
+    }
+
+    void enterName() {
+        std::cout << "Enter your name: ";
+        std::getline(std::cin, userName);
+        send(clientSocket, userName.c_str(), userName.size(), 0);
+    }
 
     void receiveMessages() {
         char buffer[1024];

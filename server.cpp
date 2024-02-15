@@ -1,9 +1,17 @@
 #include <iostream>
 #include <vector>
+#include <map>
 #include <WinSock2.h>
 #include <thread>
 #include <mutex>
+#include <algorithm>
+#include <string>
 #pragma comment(lib, "ws2_32.lib")
+
+struct ClientInfo {
+    SOCKET socket;
+    std::string name;
+};
 
 class Server {
 public:
@@ -53,14 +61,10 @@ public:
                 std::cerr << "Accept failed with error: " << WSAGetLastError() << std::endl;
                 closesocket(serverSocket);
                 WSACleanup();
-                exit(EXIT_FAILURE);
+                continue;
             }
 
             std::cout << "New client connected" << std::endl;
-            clients.push_back(clientSocket);
-
-            // Create a new thread for each client to handle communication
-            std::lock_guard<std::mutex> lock(m);
             std::thread([this, clientSocket]() {
                 handleClient(clientSocket);
             }).detach();
@@ -72,34 +76,96 @@ private:
     SOCKET serverSocket;
     sockaddr_in serverAddr{};
     WSADATA wsaData;
-    std::vector<SOCKET> clients;
-    std::mutex m;
+    std::map<std::string, std::vector<ClientInfo>> rooms;
+    std::mutex roomMutex;
 
     void handleClient(SOCKET clientSocket) {
         char buffer[1024];
+        // Receive client name
+        memset(buffer, 0, sizeof(buffer));
+        int bytesRead = recv(clientSocket, buffer, sizeof(buffer), 0);
+        if (bytesRead <= 0) {
+            std::cerr << "Failed to get client name or client disconnected" << std::endl;
+            closesocket(clientSocket);
+            return;
+        }
+        std::string clientName(buffer, bytesRead);
+
+        // Receive room ID
+        memset(buffer, 0, sizeof(buffer));
+        bytesRead = recv(clientSocket, buffer, sizeof(buffer), 0);
+        if (bytesRead <= 0) {
+            std::cerr << "Failed to get room ID or client disconnected" << std::endl;
+            closesocket(clientSocket);
+            return;
+        }
+        std::string roomID(buffer, bytesRead);
+        addClientToRoom(clientSocket, roomID, clientName);
+
         while (true) {
             memset(buffer, 0, sizeof(buffer));
-            int bytesRead = recv(clientSocket, buffer, sizeof(buffer), 0);
-
+            bytesRead = recv(clientSocket, buffer, sizeof(buffer), 0);
             if (bytesRead <= 0) {
-                std::cout << "Client disconnected" << std::endl;
-                for (auto it = clients.begin(); it != clients.end(); ++it) {
-                    if (*it == clientSocket) {
-                        clients.erase(it);
-                        break;
-                    }
-                }
-
+                std::cerr << "Client disconnected" << std::endl;
+                removeClientFromRoom(clientSocket, roomID);
                 closesocket(clientSocket);
                 break;
             }
 
-            for (SOCKET client : clients) {
-                if (client != clientSocket) {
-                    send(client, buffer, bytesRead, 0);
-                }
+            sendMessageToRoom(roomID, clientName, buffer, bytesRead);
+        }
+    }
+
+    void addClientToRoom(SOCKET clientSocket, const std::string &roomID, const std::string &clientName) {
+        std::lock_guard<std::mutex> lock(roomMutex);
+        rooms[roomID].push_back({clientSocket, clientName});
+        std::cout << "Client " << clientName << " added to room " << roomID << std::endl;
+
+        std::string message = clientName + " has joined the room.";
+        for (const auto& client : rooms[roomID]) {
+            if (client.socket != clientSocket) {
+                send(client.socket, message.c_str(), message.length(), 0);
             }
         }
+    }
+
+    void removeClientFromRoom(SOCKET clientSocket, const std::string& roomID) {
+        std::lock_guard<std::mutex> lock(roomMutex);
+        std::string clientName;
+        auto& clients = rooms[roomID];
+        auto it = std::find_if(clients.begin(), clients.end(), [clientSocket, &clientName](const ClientInfo& ci) {
+            if (ci.socket == clientSocket) {
+                clientName = ci.name;
+                return true;
+            }
+            return false;
+        });
+
+        if (it != clients.end()) {
+            clients.erase(it);
+            std::cout << "Client " << clientName << " removed from room " << roomID << std::endl;
+
+            std::string message = clientName + " has left the room.";
+            for (const auto& client : clients) {
+                send(client.socket, message.c_str(), message.length(), 0);
+            }
+        }
+    }
+
+
+    void
+    sendMessageToRoom(const std::string &roomID, const std::string &clientName, const char *message, int messageSize) {
+        std::lock_guard<std::mutex> lock(roomMutex);
+        std::string fullMessage = clientName + ": " + std::string(message, messageSize);
+        for (const auto &client: rooms[roomID]) {
+            if (client.name != clientName) { // Don't send the message to the sender
+                send(client.socket, fullMessage.c_str(), fullMessage.length(), 0);
+            }
+        }
+    }
+
+    void WSACleanup() {
+        WSACleanup();
     }
 };
 
@@ -107,6 +173,5 @@ int main() {
     const int port = 12345;
     Server server(port);
     server.start();
-
     return 0;
-}
+};
