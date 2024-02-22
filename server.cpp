@@ -6,6 +6,8 @@
 #include <mutex>
 #include <algorithm>
 #include <string>
+#include <fstream>
+#include <filesystem>
 #pragma comment(lib, "ws2_32.lib")
 
 struct ClientInfo {
@@ -124,7 +126,23 @@ private:
                 send(clientSocket, successMessage.c_str(), successMessage.length(), 0);
             } else if (message.find("EXIT") == 0) {
                 removeClientFromRoom(clientSocket, roomID);
-                closesocket(clientSocket);}
+                closesocket(clientSocket);
+            }
+            else if (message.find("SEND") == 0){
+                getFile(clientSocket);
+            }
+            else if (message.find("ACCEPT") == 0){
+                std::string type = "FILE";
+                send(clientSocket, type.c_str(), type.length(),0);
+                for (const auto& entry : std::filesystem::directory_iterator("C:\\KSE IT\\Client Server Concepts\\csc_third\\serverStorage")) {
+                    if (entry.is_regular_file()) {
+                        std::string fileName = entry.path().filename().string();
+                        std::uintmax_t fileSize = std::filesystem::file_size(entry.path());
+                        sendFile(clientSocket, fileName, fileSize);
+                    }
+                }
+
+            }
             else {
                 sendMessageToRoom(roomID, clientName, buffer, bytesRead);
             }
@@ -167,9 +185,7 @@ private:
         }
     }
 
-
-    void
-    sendMessageToRoom(const std::string &roomID, const std::string &clientName, const char *message, int messageSize) {
+    void sendMessageToRoom(const std::string &roomID, const std::string &clientName, const char *message, int messageSize) {
         std::lock_guard<std::mutex> lock(roomMutex);
         std::string fullMessage = clientName + ": " + std::string(message, messageSize);
         for (const auto &client: rooms[roomID]) {
@@ -178,6 +194,109 @@ private:
             }
         }
     }
+
+    void sendFile(SOCKET clientSocket, const std::string& fileName,  std::uintmax_t fileSize){
+        std::ifstream fileToSend("C:\\KSE IT\\Client Server Concepts\\csc_third\\serverStorage\\" + fileName , std::ios::binary);
+        if (!fileToSend.is_open()) {
+            std::cerr << "Failed to open file for reading: " << fileName << std::endl;
+            return;
+        }
+
+        const int chunkSize = 1024;
+        char fileBuffer[chunkSize];
+
+        send(clientSocket, fileName.c_str(), fileName.length(), 0);
+        send(clientSocket, reinterpret_cast<const char*>(&fileSize), sizeof(fileSize), 0);
+
+        while (!fileToSend.eof()) {
+            fileToSend.read(fileBuffer, chunkSize);
+            int bytesRead = static_cast<int>(fileToSend.gcount());
+            send(clientSocket, fileBuffer, bytesRead, 0);
+        }
+
+        std::cout << "File sent to client " << getClientName(clientSocket) << std::endl;
+
+
+        fileToSend.close();
+
+    }
+
+    void getFile(SOCKET clientSocket) {
+        char buffer[1024];
+        int bytesRead;
+
+        memset(buffer, 0, sizeof(buffer));
+        bytesRead = recv(clientSocket, buffer, sizeof(buffer), 0);
+        if (bytesRead <= 0) {
+            std::cerr << "Failed to get file name or client disconnected" << std::endl;
+            closesocket(clientSocket);
+            return;
+        }
+        std::string fileName(buffer, bytesRead);
+
+        int fileSize;
+        bytesRead = recv(clientSocket, reinterpret_cast<char*>(&fileSize), sizeof(fileSize), 0);
+        if (bytesRead != sizeof(fileSize)) {
+            std::cerr << "Failed to get file size or client disconnected" << std::endl;
+            closesocket(clientSocket);
+            return;
+        }
+
+        std::ofstream outputFile("C:\\KSE IT\\Client Server Concepts\\csc_third\\serverStorage\\" + fileName, std::ios::binary);
+        if (!outputFile.is_open()) {
+            std::cerr << "Failed to open file for writing: " << fileName << std::endl;
+            return;
+        }
+
+        int totalBytesReceived = 0;
+        while (totalBytesReceived < fileSize) {
+            bytesRead = recv(clientSocket, buffer, sizeof(buffer), 0);
+            outputFile.write(buffer, bytesRead);
+            totalBytesReceived += bytesRead;
+        }
+
+        outputFile.close();
+        std::cout << "File received: " << fileName << std::endl;
+
+        std::string notification = "User " + getClientName(clientSocket) + " wants to send you a file named '" + fileName + "' (" + std::to_string(fileSize) + " bytes). Do you want to accept? (ACCEPT/NO)";
+        sendRequest(getClientRoomID(clientSocket), clientSocket, notification);
+    }
+
+    std::string getClientName(SOCKET clientSocket) {
+        std::string clientName;
+        for (const auto& [roomID, clients] : rooms) {
+            for (const auto& client : clients) {
+                if (client.socket == clientSocket) {
+                    clientName = client.name;
+                    break;
+                }
+            }
+        }
+        return clientName;
+    }
+
+    std::string getClientRoomID(SOCKET clientSocket) {
+        std::string roomID;
+        for (const auto& [rID, clients] : rooms) {
+            for (const auto& client : clients) {
+                if (client.socket == clientSocket) {
+                    roomID = rID;
+                    break;
+                }
+            }
+        }
+        return roomID;
+    }
+
+    void sendRequest(const std::string& roomID, SOCKET senderSocket, const std::string& message) {
+        for (const auto& client : rooms[roomID]) {
+            if (client.socket != senderSocket) {
+                send(client.socket, message.c_str(), message.length(), 0);
+            }
+        }
+    }
+
+
 
     void WSACleanup() {
         WSACleanup();

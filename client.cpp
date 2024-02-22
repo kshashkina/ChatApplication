@@ -84,7 +84,11 @@ private:
                 std::cerr << "Server disconnected" << std::endl;
                 break;
             }
-            std::cout  << buffer << std::endl;
+            if (strcmp(buffer, "FILE") == 0) {
+                receiveFile();
+            }else{
+            std::cout << buffer << std::endl;
+            }
         }
     }
 
@@ -99,9 +103,103 @@ private:
                 closesocket(clientSocket);
                 WSACleanup();
                 exit(0);
-            } else {
+            } else if (message.substr(0, 4) == "SEND"){
+                send(clientSocket, "SEND", 4, 0);
+                std::string filePath = message.substr(5);
+                sendFile(filePath);
+                continue;
+            }
+            else {
                 send(clientSocket, message.c_str(), message.length(), 0);
             }
+        }
+    };
+
+    void receiveFile() {
+        ensureUserFolderExists();
+        const int chunkSize = 1024;
+        char fileBuffer[chunkSize];
+
+        // Receive the file name
+        char fileNameBuffer[256]; // Assuming maximum file name length is 255 characters
+        int fileNameLength = recv(clientSocket, fileNameBuffer, sizeof(fileNameBuffer), 0);
+        if (fileNameLength <= 0) {
+            std::cerr << "Failed to receive file name." << std::endl;
+            return;
+        }
+        fileNameBuffer[fileNameLength] = '\0';
+        std::string fileName(fileNameBuffer);
+
+        // Receive the file size
+        long long fileSize;
+        int bytesReceived = recv(clientSocket, reinterpret_cast<char*>(&fileSize), sizeof(fileSize), 0);
+        if (bytesReceived != sizeof(fileSize)) {
+            std::cerr << "Failed to receive file size." << std::endl;
+            return;
+        }
+
+        // Open the file for writing
+        std::ofstream receivedFile("C:\\KSE IT\\Client Server Concepts\\csc_third\\clientStorage\\" + userName + "\\" + fileName, std::ios::binary);
+        if (!receivedFile.is_open()) {
+            std::cerr << "Failed to open file for writing: " << fileName << std::endl;
+            return;
+        }
+
+        // Receive and write file data
+        long long totalBytesReceived = 0;
+        while (totalBytesReceived < fileSize) {
+            int bytesToReceive = std::min(chunkSize, static_cast<int>(fileSize - totalBytesReceived));
+            int bytesReceived = recv(clientSocket, fileBuffer, bytesToReceive, 0);
+            if (bytesReceived <= 0) {
+                std::cerr << "Error while receiving file data." << std::endl;
+                return;
+            }
+            receivedFile.write(fileBuffer, bytesReceived);
+            totalBytesReceived += bytesReceived;
+        }
+
+        std::cout << "File received: " << fileName << std::endl;
+
+        // Close the file
+        receivedFile.close();
+    }
+
+    void sendFile(const std::string& filePath) const{
+        std::ifstream fileToSend(filePath, std::ios::binary);
+        if (!fileToSend.is_open()) {
+            std::cerr << "Failed to open the file: " << filePath << std::endl;
+            return;
+        }
+
+        // Sending filename
+        size_t lastSlash = filePath.find_last_of("\\/");
+        std::string fileName = filePath.substr(lastSlash + 1);
+        send(clientSocket, fileName.c_str(), fileName.length(), 0);
+
+        fileToSend.seekg(0, std::ios::end);
+        int fileSize = static_cast<int>(fileToSend.tellg());
+        fileToSend.seekg(0, std::ios::beg);
+        // Sending num of bytes
+        send(clientSocket, reinterpret_cast<const char*>(&fileSize), sizeof(fileSize), 0);
+
+        const int chunkSize = 1024;
+        char buffer[chunkSize];
+
+        //Sending data
+        while (!fileToSend.eof()) {
+            fileToSend.read(buffer, chunkSize);
+            int bytesRead = static_cast<int>(fileToSend.gcount());
+            send(clientSocket, buffer, bytesRead, 0);
+        }
+        fileToSend.close();
+    }
+
+    void ensureUserFolderExists() {
+        std::filesystem::path userFolderPath = "C:\\KSE IT\\Client Server Concepts\\csc_third\\clientStorage\\" + userName;
+
+        if (!std::filesystem::exists(userFolderPath)) {
+            std::filesystem::create_directory(userFolderPath);
+            std::cout << "User folder created: " << userFolderPath << std::endl;
         }
     }
 };
