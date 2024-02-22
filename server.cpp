@@ -8,11 +8,20 @@
 #include <string>
 #include <fstream>
 #include <filesystem>
+#include <condition_variable>
+#include <queue>
+
 #pragma comment(lib, "ws2_32.lib")
 
 struct ClientInfo {
     SOCKET socket;
     std::string name;
+};
+
+struct QueuedMessage {
+    std::string roomID;
+    std::string clientName;
+    std::string message;
 };
 
 class Server {
@@ -53,6 +62,11 @@ public:
             exit(EXIT_FAILURE);
         }
 
+        std::thread([this]() {
+            this->processMessageQueue();
+        }).detach();
+
+
         std::cout << "Server listening on port " << port << std::endl;
     }
 
@@ -81,6 +95,9 @@ private:
     std::map<std::string, std::vector<ClientInfo>> rooms;
     std::map<std::string, int> roomCounters; // Counter for the number of people in each room
     std::mutex roomMutex;
+    std::queue<QueuedMessage> messageQueue;
+    std::mutex queueMutex;
+    std::condition_variable queueCondition;
 
     void handleClient(SOCKET clientSocket) {
         std::string path = "C:\\KSE IT\\Client Server Concepts\\csc_third\\serverStorage";
@@ -135,7 +152,7 @@ private:
             }
             else if (message.find("NO") == 0) {
                 if (isDirectoryEmpty(path)) {
-                    sendMessageToRoom(roomID, clientName, buffer, bytesRead);
+                    addMessageToQueue(roomID, clientName, message);
                 } else {
                     roomCounters[roomID]--;
                 }
@@ -152,7 +169,7 @@ private:
                 }
             }
             else {
-                sendMessageToRoom(roomID, clientName, buffer, bytesRead);
+                addMessageToQueue(roomID, clientName, message);
             }
         }
     }
@@ -192,6 +209,24 @@ private:
             for (const auto& client : clients) {
                 send(client.socket, message.c_str(), message.length(), 0);
             }
+        }
+    }
+
+
+    void addMessageToQueue(const std::string& roomID, const std::string& clientName, const std::string& message) {
+        std::lock_guard<std::mutex> lock(queueMutex);
+        messageQueue.push({roomID, clientName, message});
+        queueCondition.notify_one();
+    }
+
+    void processMessageQueue() {
+        while (true) {
+            std::unique_lock<std::mutex> lock(queueMutex);
+            queueCondition.wait(lock, [this]() { return !messageQueue.empty(); });
+            QueuedMessage msg = messageQueue.front();
+            messageQueue.pop();
+            lock.unlock();
+            sendMessageToRoom(msg.roomID, msg.clientName, msg.message.c_str(), msg.message.length());
         }
     }
 
