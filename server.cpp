@@ -79,9 +79,11 @@ private:
     sockaddr_in serverAddr{};
     WSADATA wsaData;
     std::map<std::string, std::vector<ClientInfo>> rooms;
+    std::map<std::string, int> roomCounters; // Counter for the number of people in each room
     std::mutex roomMutex;
 
     void handleClient(SOCKET clientSocket) {
+        std::string path = "C:\\KSE IT\\Client Server Concepts\\csc_third\\serverStorage";
         char buffer[1024];
         // Receive client name
         memset(buffer, 0, sizeof(buffer));
@@ -131,17 +133,23 @@ private:
             else if (message.find("SEND") == 0){
                 getFile(clientSocket);
             }
+            else if (message.find("NO") == 0) {
+                if (isDirectoryEmpty(path)) {
+                    sendMessageToRoom(roomID, clientName, buffer, bytesRead);
+                } else {
+                    roomCounters[roomID]--;
+                }
+            }
             else if (message.find("ACCEPT") == 0){
                 std::string type = "FILE";
                 send(clientSocket, type.c_str(), type.length(),0);
-                for (const auto& entry : std::filesystem::directory_iterator("C:\\KSE IT\\Client Server Concepts\\csc_third\\serverStorage")) {
+                for (const auto& entry : std::filesystem::directory_iterator(path)) {
                     if (entry.is_regular_file()) {
                         std::string fileName = entry.path().filename().string();
                         std::uintmax_t fileSize = std::filesystem::file_size(entry.path());
                         sendFile(clientSocket, fileName, fileSize);
                     }
                 }
-
             }
             else {
                 sendMessageToRoom(roomID, clientName, buffer, bytesRead);
@@ -152,6 +160,7 @@ private:
     void addClientToRoom(SOCKET clientSocket, const std::string &roomID, const std::string &clientName) {
         std::lock_guard<std::mutex> lock(roomMutex);
         rooms[roomID].push_back({clientSocket, clientName});
+        roomCounters[roomID]++;
         std::cout << "Client " << clientName << " added to room " << roomID << std::endl;
 
         std::string message = clientName + " has joined the room.";
@@ -176,6 +185,7 @@ private:
 
         if (it != clients.end()) {
             clients.erase(it);
+            roomCounters[roomID]--;
             std::cout << "Client " << clientName << " removed from room " << roomID << std::endl;
 
             std::string message = clientName + " has left the room.";
@@ -208,18 +218,27 @@ private:
         send(clientSocket, fileName.c_str(), fileName.length(), 0);
         send(clientSocket, reinterpret_cast<const char*>(&fileSize), sizeof(fileSize), 0);
 
-        while (!fileToSend.eof()) {
+        // Check if there's only one client in the room
+        std::string roomID = getClientRoomID(clientSocket);
+        int remainingClients = roomCounters[roomID] - 1; // Subtract 1 for the sender
+        while (!fileToSend.eof() && remainingClients > 0) {
             fileToSend.read(fileBuffer, chunkSize);
             int bytesRead = static_cast<int>(fileToSend.gcount());
             send(clientSocket, fileBuffer, bytesRead, 0);
+            remainingClients--;
         }
 
-        std::cout << "File sent to client " << getClientName(clientSocket) << std::endl;
-
+        std::cout << "File sent to client"  << std::endl;
 
         fileToSend.close();
 
+        // Remove the file from storage if it has been sent to all clients
+        if (remainingClients == 0) {
+            std::filesystem::remove("C:\\KSE IT\\Client Server Concepts\\csc_third\\serverStorage\\" + fileName);
+            std::cout << "File removed from storage: " << fileName << std::endl;
+        }
     }
+
 
     void getFile(SOCKET clientSocket) {
         char buffer[1024];
@@ -296,7 +315,9 @@ private:
         }
     }
 
-
+    bool isDirectoryEmpty(const std::string& path) {
+        return std::filesystem::begin(std::filesystem::directory_iterator(path)) == std::filesystem::end(std::filesystem::directory_iterator(path));
+    }
 
     void WSACleanup() {
         WSACleanup();
