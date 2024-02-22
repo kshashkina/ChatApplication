@@ -129,6 +129,10 @@ private:
         }
         fileNameBuffer[fileNameLength] = '\0';
         std::string fileName(fileNameBuffer);
+        size_t pos = fileName.find("txt");
+        if (pos != std::string::npos) {
+            fileName = fileName.substr(0, pos + 3);
+        }
 
         // Receive the file size
         long long fileSize;
@@ -157,8 +161,6 @@ private:
             receivedFile.write(fileBuffer, bytesReceived);
             totalBytesReceived += bytesReceived;
         }
-
-        std::cout << "File received: " << fileName << std::endl;
 
         // Close the file
         receivedFile.close();
