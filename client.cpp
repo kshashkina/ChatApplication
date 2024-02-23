@@ -4,6 +4,8 @@
 #include <fstream>
 #include <filesystem>
 #include <thread>
+#include <mutex>
+#include <condition_variable>
 
 #pragma comment(lib, "ws2_32.lib")
 
@@ -62,6 +64,9 @@ private:
     WSADATA wsaData;
     std::string roomID;
     std::string userName;
+    std::mutex fileSendMutex;
+    std::condition_variable fileSendCondition;
+    bool fileSendComplete = false;
 
     void enterRoom() {
         std::cout << "Enter room ID: ";
@@ -86,9 +91,17 @@ private:
             }
             if (strcmp(buffer, "FILE") == 0) {
                 receiveFile();
-            }else{
-            std::cout << buffer << std::endl;
+                std::cout << "File was received" << std::endl;
             }
+            else if(strcmp(buffer, "ALL_RECV") == 0) {
+                std::unique_lock<std::mutex> lock(fileSendMutex);
+                fileSendComplete = true;
+                fileSendCondition.notify_one();
+
+            }else{
+                    std::cout << buffer << std::endl;
+                }
+
         }
     }
 
@@ -166,7 +179,7 @@ private:
         receivedFile.close();
     }
 
-    void sendFile(const std::string& filePath) const{
+    void sendFile(const std::string& filePath) {
         std::ifstream fileToSend(filePath, std::ios::binary);
         if (!fileToSend.is_open()) {
             std::cerr << "Failed to open the file: " << filePath << std::endl;
@@ -194,6 +207,10 @@ private:
             send(clientSocket, buffer, bytesRead, 0);
         }
         fileToSend.close();
+
+        std::unique_lock<std::mutex> lock(fileSendMutex);
+        fileSendCondition.wait(lock, [this] { return fileSendComplete; });
+        fileSendComplete = false;
     }
 
     void ensureUserFolderExists() {

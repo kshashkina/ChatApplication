@@ -98,10 +98,7 @@ private:
     std::queue<QueuedMessage> messageQueue;
     std::mutex queueMutex;
     std::condition_variable queueCondition;
-    std::mutex sendFileMutex; // Global mutex to control access to the file sending process
-    std::condition_variable sendFileCV; // Condition variable for waiting in line to send the file
-    bool isSendingFile = false; // Flag indicating whether a file is currently being sent
-
+   SOCKET senderSocket;
 
     void handleClient(SOCKET clientSocket) {
         std::string path = "C:\\KSE IT\\Client Server Concepts\\csc_third\\serverStorage";
@@ -245,16 +242,9 @@ private:
     }
 
     void sendFile(SOCKET clientSocket, const std::string& fileName,  std::uintmax_t fileSize){
-        std::unique_lock<std::mutex> lock(sendFileMutex);
-        // Wait until it's this thread's turn to send the file
-        sendFileCV.wait(lock, [this]{ return !isSendingFile; });
-        isSendingFile = true; // Mark the beginning of the file sending process
-
         std::ifstream fileToSend("C:\\KSE IT\\Client Server Concepts\\csc_third\\serverStorage\\" + fileName, std::ios::binary);
         if (!fileToSend.is_open()) {
             std::cerr << "Failed to open file for reading: " << fileName << std::endl;
-            isSendingFile = false;
-            sendFileCV.notify_one();
             return;
         }
 
@@ -282,12 +272,9 @@ private:
         if (remainingClients == 0) {
             std::filesystem::remove("C:\\KSE IT\\Client Server Concepts\\csc_third\\serverStorage\\" + fileName);
             std::cout << "File removed from storage: " << fileName << std::endl;
+            std::string notificationMessage = "ALL_RECV";
+            send(senderSocket, notificationMessage.c_str(), notificationMessage.length(), 0);
         }
-
-        isSendingFile = false; // Mark the end of the file sending process
-        lock.unlock();
-        sendFileCV.notify_one();
-
     }
 
 
@@ -327,6 +314,7 @@ private:
 
         outputFile.close();
         std::cout << "File received: " << fileName << std::endl;
+        senderSocket = clientSocket;
 
         std::string notification = "User " + getClientName(clientSocket) + " wants to send you a file named '" + fileName + "' (" + std::to_string(fileSize) + " bytes). Do you want to accept? (ACCEPT/NO)";
         sendRequest(getClientRoomID(clientSocket), clientSocket, notification);
