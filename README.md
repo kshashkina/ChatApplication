@@ -64,15 +64,147 @@ This application is a simple client-server application that enables clients to c
 
 ### Joining & Messages
 ![Example Image](/images/join_and_messages.png)
+#### Joining Room
+```cpp
+void addClientToRoom(SOCKET clientSocket, const std::string &roomID, const std::string &clientName) {
+        std::lock_guard<std::mutex> lock(roomMutex);
+        rooms[roomID].push_back({clientSocket, clientName});
+        roomCounters[roomID]++;
+        std::cout << "Client " << clientName << " added to room " << roomID << std::endl;
+
+        std::string message = clientName + " has joined the room.";
+        for (const auto& client : rooms[roomID]) {
+            if (client.socket != clientSocket) {
+                send(client.socket, message.c_str(), message.length(), 0);
+            }
+        }
+    }
+```
+
+#### Messaging
+```cpp
+ void addMessageToQueue(const std::string& roomID, const std::string& clientName, const std::string& message) {
+        std::lock_guard<std::mutex> lock(queueMutex);
+        messageQueue.push({roomID, clientName, message});
+        queueCondition.notify_one();
+    }
+
+    void processMessageQueue() {
+        while (true) {
+            std::unique_lock<std::mutex> lock(queueMutex);
+            queueCondition.wait(lock, [this]() { return !messageQueue.empty(); });
+            QueuedMessage msg = messageQueue.front();
+            messageQueue.pop();
+            lock.unlock();
+            sendMessageToRoom(msg.roomID, msg.clientName, msg.message.c_str(), msg.message.length());
+        }
+    }
+
+    void sendMessageToRoom(const std::string &roomID, const std::string &clientName, const char *message, int messageSize) {
+        std::lock_guard<std::mutex> lock(roomMutex);
+        std::string fullMessage = clientName + ": " + std::string(message, messageSize);
+        for (const auto &client: rooms[roomID]) {
+            if (client.name != clientName) { // Don't send the message to the sender
+                send(client.socket, fullMessage.c_str(), fullMessage.length(), 0);
+            }
+        }
+    }
+```
 
 ### Changing Room
 ![Example Image](/images/room_change.png)
+```cpp
+if (message.find("CHANGE ") == 0) {
+                std::string newRoomID = message.substr(7);
+                removeClientFromRoom(clientSocket, roomID);
+                roomID = newRoomID;
+                addClientToRoom(clientSocket, roomID, clientName);
+                ...
+void addClientToRoom(SOCKET clientSocket, const std::string &roomID, const std::string &clientName) {
+        std::lock_guard<std::mutex> lock(roomMutex);
+        rooms[roomID].push_back({clientSocket, clientName});
+        roomCounters[roomID]++;
+        std::cout << "Client " << clientName << " added to room " << roomID << std::endl;
+
+        std::string message = clientName + " has joined the room.";
+        for (const auto& client : rooms[roomID]) {
+            if (client.socket != clientSocket) {
+                send(client.socket, message.c_str(), message.length(), 0);
+            }
+        }
+    }
+
+    void removeClientFromRoom(SOCKET clientSocket, const std::string& roomID) {
+        std::lock_guard<std::mutex> lock(roomMutex);
+        std::string clientName;
+        auto& clients = rooms[roomID];
+        auto it = std::find_if(clients.begin(), clients.end(), [clientSocket, &clientName](const ClientInfo& ci) {
+            if (ci.socket == clientSocket) {
+                clientName = ci.name;
+                return true;
+            }
+            return false;
+        });
+
+        if (it != clients.end()) {
+            clients.erase(it);
+            roomCounters[roomID]--;
+            std::cout << "Client " << clientName << " removed from room " << roomID << std::endl;
+
+            std::string message = clientName + " has left the room.";
+            for (const auto& client : clients) {
+                send(client.socket, message.c_str(), message.length(), 0);
+            }
+        }
+    }
+```
 
 ### File Sending
 ![Example Image](/images/file_sending.png)
+```cpp
+void sendFile(SOCKET clientSocket, const std::string& fileName,  std::uintmax_t fileSize){
+        std::ifstream fileToSend("C:\\KSE IT\\Client Server Concepts\\csc_third\\serverStorage\\" + fileName, std::ios::binary);
+        if (!fileToSend.is_open()) {
+            std::cerr << "Failed to open file for reading: " << fileName << std::endl;
+            return;
+        }
+
+        const int chunkSize = 1024;
+        char fileBuffer[chunkSize];
+
+        send(clientSocket, fileName.c_str(), fileName.length(), 0);
+        send(clientSocket, reinterpret_cast<const char*>(&fileSize), sizeof(fileSize), 0);
+
+        // Check if there's only one client in the room
+        std::string roomID = getClientRoomID(clientSocket);
+        int remainingClients = roomCounters[roomID] - 1; // Subtract 1 for the sender
+        while (!fileToSend.eof() && remainingClients > 0) {
+            fileToSend.read(fileBuffer, chunkSize);
+            int bytesRead = static_cast<int>(fileToSend.gcount());
+            send(clientSocket, fileBuffer, bytesRead, 0);
+            remainingClients--;
+        }
+
+        std::cout << "File sent to client"  << std::endl;
+
+        fileToSend.close();
+
+        // Remove the file from storage if it has been sent to all clients
+        if (remainingClients == 0) {
+            std::filesystem::remove("C:\\KSE IT\\Client Server Concepts\\csc_third\\serverStorage\\" + fileName);
+            std::cout << "File removed from storage: " << fileName << std::endl;
+        }
+    }
+```
 
 ### Exiting
 ![Example Image](/images/exiting.png)
+```cpp
+else if (message.find("EXIT") == 0) {
+                removeClientFromRoom(clientSocket, roomID);
+                closesocket(clientSocket);
+            }
+```
 
 ### Sequence for Messages
 ![Example Image](/images/sequence_messages.png)
