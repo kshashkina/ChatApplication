@@ -18,8 +18,11 @@ This application is a simple client-server application that enables clients to c
 - Handles file transfer requests and notifications.
 
 ## Messaging Protocol
+### Sending name and room ID
+When we start our execution, we send the name (bytes: depends on the length of the name) and the room number (bytes: 1)
+
 ### User Input:
-- The client enters a text message into the console. This action is performed within a loop that continuously prompts the user for input.
+- The client enters a text message into the console. This action is performed within a loop that continuously prompts the user for input. Amount of bytes transmitted depends on the massage length.
 
 ### Message Sending:
 - The entered message is sent to the server using the send() function. Before sending, the message is stored as a string. The send() function takes the socket, the message, its length, and flags (typically set to 0) as parameters.
@@ -32,7 +35,7 @@ This application is a simple client-server application that enables clients to c
 ### Message Distribution:
 - Later, server takes messages from the queue one by one.
 - The server then identifies the chat room associated with the sending client and iterates over all clients in that room, excluding the sender.
-- It forwards the received message to each client using send(), replicating the message across the chat room.
+- It forwards the received message to each client using send(), replicating the message across the chat room. The length of the message distributed depends on the name of sender and the message itseld. So the amount of bytes will be like "length of name" + "length of message" + 2 - "2" stands separator between the name and the message.
 
 ### Client Reception:
 - Each client in the room receives the message in their respective recv() loop, running in a dedicated thread to handle incoming data without blocking the main thread.
@@ -45,18 +48,18 @@ This application is a simple client-server application that enables clients to c
 
 - A client initiates a file transfer by sending a specific command (e.g., "SEND") followed by the file path or identifier.
 - The server gets file from the client.
-1. File Name and Size: First, the client sends the file name and its size to the server. This is server for the client to prepare for file reception, including allocating space and opening a file stream for writing.
+1. File Name and Size: First, the client sends the file name (bytes: length of the name) and its size (bytes: 4 bytes) to the server. This is server for the client to prepare for file reception, including allocating space and opening a file stream for writing.
 2. Chunked Data Transfer: The file is transmitted in chunks, often 1024 bytes at a time, until the entire file is sent. The client reads from the file and sends each chunk sequentially. The server receives each chunk, writing it to the specified file location as it arrives.
 - Then it parses this command and prepares to handle the file transfer to the clients.
 
 ### Server Notification to Other Clients:
-- The server sends a notification to all other clients in the room, indicating an incoming file transfer. This notification includes the file name and size and asks if they accept the file.
+- The server sends a notification to all other clients in the room, indicating an incoming file transfer. This notification includes the file name and size and asks if they accept the file. The length of this notification depends on the two variables: file name and its size.
 
 ### Client Acceptance:
 - Each client responds with either acceptance ("ACCEPT") or refusal ("NO"). This decision may trigger different flows, such as proceeding with file reception or skipping the transfer.
 
 ### File Data Transmission:
-- Upon receiving confirmation to proceed, the server begins the file transmission process in the same way as client send file to the temporary server storage.
+- Upon receiving confirmation to proceed, the server begins the file transmission process in the same way as the client sends the file to the temporary server storage. The only difference is that the size of the file is 8 bytes length.
 
 ### Completion and Cleanup:
 - After all chunks have been transmitted, the server and client perform necessary cleanup actions. This includes closing file streams and, on the server side, potentially deleting the file or marking it as sent.
